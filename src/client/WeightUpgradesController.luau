@@ -432,36 +432,62 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 	return screen, power :: Frame, amountLabel :: TextLabel
 end
 
-local function addShopButton(parent: GuiObject, main: ScreenGui?)
+local function addShopButton()
 	if HUD then
 		return
 	end
-	if parent:FindFirstChild("OpenShop") then
-		local leftover = parent:FindFirstChild("StopWorkout")
-		if leftover then
-			leftover:Destroy()
-		end
+	local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 8)
+	if not pg then
 		return
 	end
+	local stale: { Instance } = {}
+	for _, inst in pg:GetDescendants() do
+		if inst.Name == "StopWorkout" or inst.Name == "OpenShop" then
+			table.insert(stale, inst)
+		end
+	end
+	for _, inst in stale do
+		inst:Destroy()
+	end
+	if pg:FindFirstChild("WorkoutShop") then
+		return
+	end
+	local screen = Instance.new("ScreenGui")
+	screen.Name = "WorkoutShop"
+	screen.ResetOnSpawn = false
+	screen.IgnoreGuiInset = true
+	screen.DisplayOrder = 10001
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	local btn = Instance.new("TextButton")
 	btn.Name = "OpenShop"
-	btn.Text = "SHOP"
+	btn.Text = "Shop"
 	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 14
-	btn.TextColor3 = Color3.new(1, 1, 1)
-	btn.BackgroundColor3 = Color3.fromRGB(40, 120, 70)
-	btn.Size = UDim2.fromOffset(72, 32)
-	btn.Position = UDim2.new(1, -8, 0.5, 0)
-	btn.AnchorPoint = Vector2.new(1, 0.5)
+	btn.TextSize = 18
+	btn.TextColor3 = Color3.fromRGB(235, 255, 242)
+	btn.BackgroundColor3 = Color3.fromRGB(36, 120, 78)
+	btn.BackgroundTransparency = 0.35
+	btn.Size = UDim2.fromOffset(108, 44)
+	btn.Position = UDim2.new(1, -22, 1, -22)
+	btn.AnchorPoint = Vector2.new(1, 1)
 	btn.ZIndex = 20
 	btn.AutoButtonColor = true
-	btn.Parent = parent
+	btn.Parent = screen
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 6)
+	corner.CornerRadius = UDim.new(0, 12)
 	corner.Parent = btn
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(180, 255, 210)
+	stroke.Thickness = 1.4
+	stroke.Transparency = 0.45
+	stroke.Parent = btn
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.Parent = btn
 	btn.Activated:Connect(function()
 		openNamedFrame("Upgrades")
 	end)
+	screen.Parent = pg
 end
 
 local function ownedSet(): { [number]: boolean }
@@ -1940,20 +1966,18 @@ local function init()
 		end
 		powerAmountLabel = ensurePowerCounter(counters)
 		powerFrame = counters:FindFirstChild("Power")
-		print("[WeightUpgrades] Power + SHOP at the bottom counter")
 	end
 
 	if not powerAmountLabel then
 		local _hud, kitPower, kitAmount = createMinimalPowerHud()
 		powerAmountLabel = kitAmount
 		powerFrame = kitPower
-		print("[WeightUpgrades] Power HUD + SHOP ready (bottom)")
 	end
 	updatePowerLabel()
 	if powerFrame and powerFrame:IsA("GuiObject") then
 		wirePowerEdit(powerFrame, main)
-		addShopButton(powerFrame :: GuiObject, if HUD then main else nil)
 	end
+	addShopButton()
 
 	if not HUD and not counters then
 		player.CharacterAdded:Connect(function()

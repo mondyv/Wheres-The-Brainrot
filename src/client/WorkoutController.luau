@@ -1,5 +1,4 @@
 -- [ACTIVE] WorkoutController
--- KIT_FLOATER_FIX_2
 -- Gear activate: bar across both feet during curl, white flash, +power floaters into HUD.
 -- Optional modules (HUD, sfx, fonts) are skipped on a baseplate kit so this
 -- still boots. This game already has every module, so play is unchanged.
@@ -55,6 +54,7 @@ if not GameSoundEffects then
 		playLifting = function() end,
 		playWorkoutComboFail = function() end,
 		playWorkoutComboHit = function() end,
+		playWorkoutPowerUp = function() end,
 	}
 end
 
@@ -1453,6 +1453,9 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	if amountLabel and amountLabel:IsA("TextLabel") then
 		hudSize = math.max(28, (amountLabel :: TextLabel).TextSize)
 	end
+	if not hasCustomToolbar then
+		hudSize = math.floor(hudSize * 1.5 + 0.5)
+	end
 	UiFonts.applyBodyLabel(label, hudSize, math.max(18, hudSize - 8))
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 2
@@ -2657,7 +2660,6 @@ local function missCombo(fromPress: boolean?)
 		return
 	end
 	comboBusyAnim = true
-	warn("[WK-05] combo miss → 1 (keep curling)")
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
 	playComboFailSfx(fromPress == true)
@@ -2964,9 +2966,6 @@ local function cleanupWorkoutVisuals()
 end
 
 local function onUnequip()
-	if not hasCustomToolbar then
-		warn("[WK-06] stopActiveWorkout")
-	end
 	-- Stop the grip-killer before the remote yield so a just-equipped
 	-- brainrot can keep its RightGrip.
 	cleanupWorkoutVisuals()
@@ -3130,9 +3129,6 @@ local function init()
 		return
 	end
 	scanTools(backpack)
-	if not hasCustomToolbar then
-		print("[WorkoutController] KIT_FLOATER_FIX_2")
-	end
 	backpack.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then
 			bindTool(child)
@@ -3163,6 +3159,9 @@ local function init()
 			local gain = player:GetAttribute("WorkoutLastGain")
 			local g = if typeof(gain) == "number" then gain else 0
 			if g > 0 then
+				if not hasCustomToolbar and typeof(GameSoundEffects.playWorkoutPowerUp) == "function" then
+					GameSoundEffects.playWorkoutPowerUp()
+				end
 				local ok, err = pcall(spawnPowerFloater, g)
 				if not ok then
 					warn("[WorkoutController] power floater failed:", err)

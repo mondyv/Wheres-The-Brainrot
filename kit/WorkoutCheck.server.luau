@@ -9,16 +9,13 @@ local SoundService = game:GetService("SoundService")
 
 local missing = 0
 
-local function ok(msg: string)
-	print("[WorkoutCheck] OK   ", msg)
-end
+local function ok(_msg: string) end
 
 local function bad(msg: string)
 	missing += 1
 	warn("[WorkoutCheck] NEED ", msg)
 end
 
-print("========== WORKOUT KIT CHECK ==========")
 task.wait(2)
 
 if not script:IsDescendantOf(ServerScriptService) then
@@ -131,13 +128,9 @@ if workspaceGears then
 	end
 end
 
-print("----------------------------------------")
-if missing == 0 then
-	print("[WorkoutCheck] Ready. Bottom Power + SHOP. Equip Tree Branch from the backpack.")
-else
+if missing > 0 then
 	warn("[WorkoutCheck]", missing, "problem(s).")
 end
-print("========================================")
 
 Players.PlayerAdded:Connect(function(player)
 	if player:GetAttribute("Cash") == nil then

@@ -17,4 +17,3 @@
 --
 -- No warranty. Provided as-is.
 
-print("[WorkoutLicense] This workout kit is licensed for use in your games only. Do not resell or share the kit.")

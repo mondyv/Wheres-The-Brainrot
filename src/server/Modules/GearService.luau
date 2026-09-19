@@ -329,9 +329,6 @@ function GearService.stopWorkout(player: Player)
 	if not session then
 		return
 	end
-	if kitPlayer(player) then
-		warn("[WK-STOP] workout ended", player.Name, debug.info(2, "s"), debug.info(2, "n"), debug.info(2, "l"))
-	end
 	if session.conn then
 		session.conn:Disconnect()
 		session.conn = nil

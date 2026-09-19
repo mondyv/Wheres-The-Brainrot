@@ -54,6 +54,7 @@ local upgradeTemplate: Sound?
 local levelUpTemplate: Sound?
 local releaseTemplate: Sound?
 local liftingTemplate: Sound?
+local powerUpTemplate: Sound?
 local xpCollectTemplate: Sound?
 local notification1Template: Sound?
 local landMultiplyTemplate: Sound?
@@ -394,6 +395,7 @@ function GameSoundEffects.init()
 	levelUpTemplate = resolveSoundNode(root:FindFirstChild("Level Up Sfx"))
 	releaseTemplate = resolveSoundNode(root:FindFirstChild("Release"))
 	liftingTemplate = resolveSoundNode(root:FindFirstChild("Lifting"))
+	powerUpTemplate = resolveSoundNode(root:FindFirstChild("Power Up"))
 	local xpFolder = root:FindFirstChild("Xp SFX")
 	xpCollectTemplate = findSoundIn(xpFolder, "Xp Collect") or resolveSoundNode(xpFolder)
 
@@ -609,6 +611,19 @@ function GameSoundEffects.playLifting()
 		return
 	end
 	playTemplate(liftingTemplate)
+end
+
+function GameSoundEffects.playWorkoutPowerUp()
+	if not powerUpTemplate then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		powerUpTemplate = resolveSoundNode(root and root:FindFirstChild("Power Up"))
+	end
+	if not powerUpTemplate then
+		return
+	end
+	local pitch = 0.94 + math.random() * 0.14
+	playTemplatePitched(powerUpTemplate, pitch)
+	startPurchaseCameraShake(0.2, 0.07)
 end
 
 local function resolveComboSfxFolder(): Instance?

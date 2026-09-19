@@ -1,76 +1,86 @@
 -- =============================================================================
--- WORKOUT SETUP (read this in Studio — it is the instruction sheet)
+-- WORKOUT KIT — buyer setup (open this Script in Studio and follow it)
 -- Paste as a Script named WorkoutSetup in ServerScriptService.
--- This file does not run gameplay. Open it and follow the comments.
+-- It does not run gameplay. Gears + WorkoutKit do.
 -- =============================================================================
 --
--- 1. WHERE EACH SCRIPT GOES
+-- WHAT THIS IS
+-- A portable power / workout system: equip a gear, curl, tap the on-screen
+-- combo ring, earn Power, buy heavier gears in the shop. It is not the
+-- leveling, brainrot, or swing game — only the workout loop.
 --
---    SERVER (must be ServerScriptService or NOTHING WORKS — equip will be dead):
---      Gears            = Script (server)     ← creates remotes + gives the tool
---      GearService      = ModuleScript        ← next to Gears, or in a Folder "Modules"
---      WorkoutCash      = Script (server)     ← starting Cash
---      WorkoutCheck     = Script (server)     ← Output checklist when you press Play
---      WorkoutLicense   = Script (server)
---      WorkoutSetup     = this Script
+-- Equip Tree Branch from the backpack. Tap the RING on screen (not the hotbar
+-- icon). Miss = combo back to 1, you keep curling. Combo 50 locks and Power
+-- still ticks. Press 1 / click the backpack slot to unequip and stop.
+-- Shop button is bottom-right. Power is the bottom counter.
 --
---    CLIENT (StarterPlayer > StarterPlayerScripts):
---      WorkoutKit                  = LocalScript   ← MUST be LocalScript
---      WorkoutController           = ModuleScript
---      WeightUpgradesController    = ModuleScript
---      GameSoundEffects            = ModuleScript
---      ClientSFXVolume             = ModuleScript
---      OtherVfxController          = ModuleScript
---      GearRainbowFX               = ModuleScript
+-- -----------------------------------------------------------------------------
+-- 1. FOLDERS (wrong folder = dead kit)
 --
---    Do NOT put Gears, GearService, WorkoutCash, or WorkoutSetup in
---    StarterPlayerScripts. Scripts there never run on the server.
---    Do NOT use Workspace.Gears. Meshes come from ReplicatedStorage.EssentialAssets.Gears.
+-- SERVER — ServerScriptService only:
+--   Gears              Script (server)      creates remotes + tools
+--   Modules.GearService  ModuleScript       next to Gears, inside Modules
+--   WorkoutCash        Script (server)      starting Cash
+--   WorkoutCheck       Script (server)      warns only if something is missing
+--   WorkoutLicense     Script (server)
+--   WorkoutSetup       this Script
 --
--- 2. ANIMATIONS (R6 + R15)
+-- CLIENT — StarterPlayer > StarterPlayerScripts:
+--   WorkoutKit                   LocalScript   MUST be LocalScript
+--   WorkoutController            ModuleScript
+--   WeightUpgradesController     ModuleScript
+--   GameSoundEffects             ModuleScript
+--   ClientSFXVolume              ModuleScript
+--   OtherVfxController           ModuleScript
+--   GearRainbowFX                ModuleScript
 --
---    The curl is NOT converted automatically. You upload two animations.
+-- Never put Gears / GearService / WorkoutCash in StarterPlayerScripts.
+-- Never use Workspace.Gears for meshes. Use ReplicatedStorage.EssentialAssets.Gears.
+-- Keep only ONE GearService: ServerScriptService.Modules.GearService.
 --
---    a) In the Animation Editor, make / import a looping curl for R6.
---    b) Publish to Roblox (your account or group). Copy the id.
---    c) Open ReplicatedStorage.Shared.GearConfig
---    d) Set:  M.WORKOUT_ANIMATION_ID = "rbxassetid://YOUR_R6_ID"
+-- -----------------------------------------------------------------------------
+-- 2. ANIMATION IDS (R6 + R15)
 --
---    e) Repeat for an R15 curl (R15 dummy).
---    f) Set:  M.WORKOUT_ANIMATION_ID_R15 = "rbxassetid://YOUR_R15_ID"
+-- Roblox does not convert R6 curls to R15. Upload both.
 --
---    If R15 is left as "" the R6 anim plays on R15 and looks wrong.
---    Workspace.Setup["Animation (UPLOAD)"] is just a reminder folder — the game
---    only reads the ids inside GearConfig.
+--   a) Animation Editor — looping curl on an R6 dummy. Priority Action, looped.
+--   b) Publish. Copy the id.
+--   c) ReplicatedStorage.Shared.GearConfig
+--      M.WORKOUT_ANIMATION_ID = "rbxassetid://YOUR_R6_ID"
+--   d) Same motion on an R15 dummy. Publish.
+--      M.WORKOUT_ANIMATION_ID_R15 = "rbxassetid://YOUR_R15_ID"
 --
---    Animation priority: Action, looped. Same motion as a barbell curl.
+-- If R15 is "" the R6 clip plays on R15 and looks wrong.
+-- Workspace.Setup["Animation (UPLOAD)"] is only a reminder folder.
 --
+-- -----------------------------------------------------------------------------
 -- 3. SHOP UI
 --
---    StarterGui.Main.Frames.Upgrades.Container
---      needs a row named "1" (the template). Other rows are cloned from it.
---    Optional: Frames["Edit Power"] for the strength slider.
---    In Play you should see Power + SHOP top-left. Click SHOP.
+-- StarterGui.Main.Frames.Upgrades.Container
+--   needs a row named "1" (template). Other gears clone from it.
+-- Optional: Frames["Edit Power"] for the strength slider.
 --
+-- -----------------------------------------------------------------------------
 -- 4. SOUNDS / VFX
 --
---    SoundService.SoundEffects.Lifting
---    SoundService.SoundEffects["Working out combo sfx"]  (Hitsound, Failed Combo Sound)
---    SoundService.SoundEffects.Purchase / ErrorNotif / Notification1
---    ReplicatedStorage.EssentialAssets.ComboVFX and OtherVFX
+-- SoundService.SoundEffects.Lifting
+-- SoundService.SoundEffects["Power Up"]          (power tick + light camera shake)
+-- SoundService.SoundEffects["Working out combo sfx"]  Hitsound, Failed Combo Sound
+-- SoundService.SoundEffects.Purchase / ErrorNotif / Notification1
+-- ReplicatedStorage.EssentialAssets.ComboVFX and OtherVFX
 --
--- 5. ROBUX GEARS
+-- -----------------------------------------------------------------------------
+-- 5. ROBUX GEARS (developer products, NOT game passes)
 --
---    Create Developer Products in YOUR game (not Game Passes).
---    Paste each product id into GearConfig as robuxProductId.
---    Studio on a baseplate: Robux button grants the gear for free so you can test.
+-- Create a Developer Product in YOUR game for each Robux gear.
+-- Paste the product id into GearConfig on that gear:
+--   robuxProductId = 123456789
+-- Studio on a baseplate: the Robux button grants the gear free so you can test.
 --
--- 6. PRESS PLAY AND CHECK
+-- -----------------------------------------------------------------------------
+-- 6. PLAY TEST
 --
---    View → Output should show [WorkoutKit] booting and [WorkoutCheck] OK lines.
---    Backpack should have Tree Branch. Equip it to curl. Tap the combo circle
---    on screen — not the hotbar icon — or you will unequip.
+-- View → Output should show:  [WorkoutKit] loaded
+-- Backpack has Tree Branch. Equip it. Tap the combo ring.
 --
 -- =============================================================================
-
-print("[WorkoutSetup] Open this script in Studio and read the comments (animations, folders, shop). Gameplay is Gears + WorkoutKit.")

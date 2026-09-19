@@ -437,6 +437,10 @@ local function addShopButton(parent: GuiObject, main: ScreenGui?)
 		return
 	end
 	if parent:FindFirstChild("OpenShop") then
+		local leftover = parent:FindFirstChild("StopWorkout")
+		if leftover then
+			leftover:Destroy()
+		end
 		return
 	end
 	local btn = Instance.new("TextButton")
@@ -456,42 +460,7 @@ local function addShopButton(parent: GuiObject, main: ScreenGui?)
 	corner.CornerRadius = UDim.new(0, 6)
 	corner.Parent = btn
 	btn.Activated:Connect(function()
-		local wc = WorkoutCompat.tryRequire(script.Parent, "WorkoutController")
-		if wc and typeof(wc.stopActiveWorkout) == "function" then
-			wc.stopActiveWorkout()
-		end
 		openNamedFrame("Upgrades")
-	end)
-end
-
-local function addStopButton(parent: GuiObject)
-	if HUD then
-		return
-	end
-	if parent:FindFirstChild("StopWorkout") then
-		return
-	end
-	local btn = Instance.new("TextButton")
-	btn.Name = "StopWorkout"
-	btn.Text = "STOP"
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 14
-	btn.TextColor3 = Color3.new(1, 1, 1)
-	btn.BackgroundColor3 = Color3.fromRGB(140, 40, 40)
-	btn.Size = UDim2.fromOffset(64, 32)
-	btn.Position = UDim2.new(1, -88, 0.5, 0)
-	btn.AnchorPoint = Vector2.new(1, 0.5)
-	btn.ZIndex = 20
-	btn.AutoButtonColor = true
-	btn.Parent = parent
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 6)
-	corner.Parent = btn
-	btn.Activated:Connect(function()
-		local wc = WorkoutCompat.tryRequire(script.Parent, "WorkoutController")
-		if wc and typeof(wc.stopActiveWorkout) == "function" then
-			wc.stopActiveWorkout()
-		end
 	end)
 end
 
@@ -1984,7 +1953,6 @@ local function init()
 	if powerFrame and powerFrame:IsA("GuiObject") then
 		wirePowerEdit(powerFrame, main)
 		addShopButton(powerFrame :: GuiObject, if HUD then main else nil)
-		addStopButton(powerFrame :: GuiObject)
 	end
 
 	if not HUD and not counters then

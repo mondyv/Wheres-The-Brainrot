@@ -676,41 +676,45 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		end
 	end
 
-	destroyHandGrips(character, tool:FindFirstChild("Handle") :: BasePart?)
-	local toolHandle = tool:FindFirstChild("Handle")
-	gripChildConn = character.DescendantAdded:Connect(function(child)
-		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
-			if isHandGripJoint(child, if toolHandle and toolHandle:IsA("BasePart") then toolHandle else nil) then
-				task.defer(function()
-					if child.Parent then
-						child:Destroy()
-					end
-				end)
+	-- Live game strips RightGrip so the bar can sit on the feet. On the kit
+	-- that unequips the tool. Keep the hand weld; only pressing 1 takes it off.
+	if hasCustomToolbar then
+		destroyHandGrips(character, tool:FindFirstChild("Handle") :: BasePart?)
+		local toolHandle = tool:FindFirstChild("Handle")
+		gripChildConn = character.DescendantAdded:Connect(function(child)
+			if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
+				if isHandGripJoint(child, if toolHandle and toolHandle:IsA("BasePart") then toolHandle else nil) then
+					task.defer(function()
+						if child.Parent then
+							child:Destroy()
+						end
+					end)
+				end
 			end
+		end)
+		if gripKillConn then
+			gripKillConn:Disconnect()
 		end
-	end)
-	if gripKillConn then
-		gripKillConn:Disconnect()
+		local gripAccum = 0
+		gripKillConn = RunService.Heartbeat:Connect(function(dt)
+			if not tool.Parent or tool.Parent ~= character then
+				if gripKillConn then
+					gripKillConn:Disconnect()
+					gripKillConn = nil
+				end
+				return
+			end
+			gripAccum += dt
+			if gripAccum < 0.08 then
+				return
+			end
+			gripAccum = 0
+			destroyHandGrips(character, if toolHandle and toolHandle:IsA("BasePart") then toolHandle else nil)
+			if tool.RequiresHandle then
+				tool.RequiresHandle = false
+			end
+		end)
 	end
-	local gripAccum = 0
-	gripKillConn = RunService.Heartbeat:Connect(function(dt)
-		if not tool.Parent or tool.Parent ~= character then
-			if gripKillConn then
-				gripKillConn:Disconnect()
-				gripKillConn = nil
-			end
-			return
-		end
-		gripAccum += dt
-		if gripAccum < 0.08 then
-			return
-		end
-		gripAccum = 0
-		destroyHandGrips(character, if toolHandle and toolHandle:IsA("BasePart") then toolHandle else nil)
-		if tool.RequiresHandle then
-			tool.RequiresHandle = false
-		end
-	end)
 
 	model.Parent = ensureWorldFolder()
 	footProp = model
@@ -1744,7 +1748,7 @@ local function ensureDoubleTapGui(): ScreenGui
 	holder.Name = "ComboHold"
 	holder.BackgroundTransparency = 1
 	holder.AnchorPoint = Vector2.new(0.5, 0.5)
-	holder.Position = UDim2.new(0.5, 0, 0.74, 0)
+	holder.Position = if hasCustomToolbar then UDim2.new(0.5, 0, 0.74, 0) else UDim2.new(0.5, 0, 0.58, 0)
 	holder.Size = UDim2.fromOffset(132, 132)
 	holder.ZIndex = 20
 	holder.Parent = gui
@@ -3057,28 +3061,7 @@ local function bindTool(tool: Tool)
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
-			if hasCustomToolbar then
-				onUnequip()
-				return
-			end
-			-- Default hotbar / missing RightGrip drops the tool after a miss.
-			-- Put it back. Use the STOP button to actually end the curl.
-			task.defer(function()
-				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-					return
-				end
-				local character = player.Character
-				local hum = getHumanoid(character)
-				local backpack = player:FindFirstChildOfClass("Backpack")
-				if hum and backpack and tool.Parent == backpack then
-					tool.ManualActivationOnly = true
-					tool.RequiresHandle = false
-					warn("[WK-04] tool dropped after miss — keeping curl")
-					pcall(function()
-						hum:EquipTool(tool)
-					end)
-				end
-			end)
+			onUnequip()
 		end)
 	)
 

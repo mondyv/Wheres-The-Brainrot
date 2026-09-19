@@ -380,8 +380,8 @@ local function startWorkoutCameraShake(durationSec: number, amp: number, kickY: 
 		local remaining = workoutShakeEndAt - os.clock()
 		local elapsed = workoutShakeDuration - remaining
 		local u = math.clamp(elapsed / workoutShakeDuration, 0, 1)
-		local envelope = math.exp(-u * 4.4)
-		local kick = workoutShakeKickY * math.clamp(1 - elapsed / 0.08, 0, 1)
+		local envelope = math.exp(-u * 1.55)
+		local kick = workoutShakeKickY * math.clamp(1 - elapsed / 0.2, 0, 1)
 		local t = os.clock() * workoutShakeSpeed
 		hum.CameraOffset = Vector3.new(
 			(math.noise(t, 0.15, 2.2) - 0.5) * 2 * workoutShakeAmp * envelope,
@@ -688,15 +688,13 @@ function GameSoundEffects.playWorkoutPowerUp(stage: number?)
 		playTemplatePitched(powerUpTemplate, pitch, if first then 0.55 else 1)
 	end
 	if first then
-		startWorkoutCameraShake(0.42, 0.28, -0.2, 36, 2)
+		startWorkoutCameraShake(0.95, 0.4, -0.28, 9, 2)
 	else
-		startWorkoutCameraShake(0.52, 0.44, -0.34, 42, 3)
+		startWorkoutCameraShake(1.15, 0.58, -0.4, 11, 3)
 	end
 end
 
 function GameSoundEffects.playWorkoutTickShake()
-	-- Weight-drop bump: dip then rumble, not a 1-frame tick.
-	startWorkoutCameraShake(0.22, 0.09, -0.07, 24, 1)
 end
 
 local function resolveComboSfxFolder(): Instance?

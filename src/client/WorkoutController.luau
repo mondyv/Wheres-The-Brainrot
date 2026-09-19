@@ -3166,9 +3166,6 @@ local function init()
 			local gain = player:GetAttribute("WorkoutLastGain")
 			local g = if typeof(gain) == "number" then gain else 0
 			if g > 0 then
-				if not hasCustomToolbar and typeof(GameSoundEffects.playWorkoutTickShake) == "function" then
-					GameSoundEffects.playWorkoutTickShake()
-				end
 				local ok, err = pcall(spawnPowerFloater, g)
 				if not ok then
 					warn("[WorkoutController] power floater failed:", err)

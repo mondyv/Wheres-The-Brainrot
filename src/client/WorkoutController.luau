@@ -1291,6 +1291,22 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 	end
 end
 
+local function findPowerFrame(host: ScreenGui): GuiObject?
+	if host.Name == "WorkoutPowerHud" then
+		local direct = host:FindFirstChild("Power")
+		if direct and direct:IsA("GuiObject") then
+			return direct
+		end
+	end
+	local sideUI = host:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
+	local powerFrame = counters and counters:FindFirstChild("Power")
+	if powerFrame and powerFrame:IsA("GuiObject") then
+		return powerFrame
+	end
+	return nil
+end
+
 local function resolveHudGui(): ScreenGui?
 	local pg = player:FindFirstChild("PlayerGui")
 	if not pg then
@@ -1309,22 +1325,6 @@ local function resolveHudGui(): ScreenGui?
 	end
 	if main and main:IsA("ScreenGui") then
 		return main
-	end
-	return nil
-end
-
-local function findPowerFrame(host: ScreenGui): GuiObject?
-	if host.Name == "WorkoutPowerHud" then
-		local direct = host:FindFirstChild("Power")
-		if direct and direct:IsA("GuiObject") then
-			return direct
-		end
-	end
-	local sideUI = host:FindFirstChild("SideUI")
-	local counters = sideUI and sideUI:FindFirstChild("Counters")
-	local powerFrame = counters and counters:FindFirstChild("Power")
-	if powerFrame and powerFrame:IsA("GuiObject") then
-		return powerFrame
 	end
 	return nil
 end

@@ -1709,6 +1709,17 @@ local function attachComboAura(plr: Player, watch: ComboWatch, character: Model,
 	disableAllFx(clone)
 	watch.auraRoot = clone
 	watch.auraName = folderName
+	if plr == Players.LocalPlayer and script.Parent:FindFirstChild("ToolbarController") == nil then
+		local sfxMod = script.Parent:FindFirstChild("GameSoundEffects")
+		if sfxMod then
+			local sfxOk, sfx = pcall(require, sfxMod)
+			if sfxOk and typeof(sfx) == "table" and typeof(sfx.playWorkoutPowerUp) == "function" then
+				sfx.playWorkoutPowerUp()
+			elseif not sfxOk then
+				warn("[OtherVfxController] GameSoundEffects:", sfx)
+			end
+		end
+	end
 	tweenComboFade(clone, 0, 1, COMBO_FADE_TWEEN)
 end
 

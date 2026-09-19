@@ -618,12 +618,15 @@ function GameSoundEffects.playWorkoutPowerUp()
 		local root = SoundService:FindFirstChild("SoundEffects")
 		powerUpTemplate = resolveSoundNode(root and root:FindFirstChild("Power Up"))
 	end
-	if not powerUpTemplate then
-		return
+	if powerUpTemplate then
+		local pitch = 0.92 + math.random() * 0.16
+		playTemplatePitched(powerUpTemplate, pitch)
 	end
-	local pitch = 0.94 + math.random() * 0.14
-	playTemplatePitched(powerUpTemplate, pitch)
-	startPurchaseCameraShake(0.2, 0.07)
+	startPurchaseCameraShake(0.34, 0.15)
+end
+
+function GameSoundEffects.playWorkoutTickShake()
+	startPurchaseCameraShake(0.12, 0.028)
 end
 
 local function resolveComboSfxFolder(): Instance?

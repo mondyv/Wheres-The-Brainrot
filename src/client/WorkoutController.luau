@@ -55,6 +55,7 @@ if not GameSoundEffects then
 		playWorkoutComboFail = function() end,
 		playWorkoutComboHit = function() end,
 		playWorkoutPowerUp = function() end,
+		playWorkoutTickShake = function() end,
 	}
 end
 
@@ -1449,16 +1450,14 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	label.LayoutOrder = 1
 	label.ZIndex = 91
 	label.Parent = row
-	local hudSize = 32
-	if amountLabel and amountLabel:IsA("TextLabel") then
-		hudSize = math.max(28, (amountLabel :: TextLabel).TextSize)
-	end
-	if not hasCustomToolbar then
-		hudSize = math.floor(hudSize * 1.5 + 0.5)
-	end
-	UiFonts.applyBodyLabel(label, hudSize, math.max(18, hudSize - 8))
+	-- Pixel body font + UITextSizeConstraint kept the flying +N tiny. Use a
+	-- display face and skip the constraint so TextSize actually shows.
+	label.Font = Enum.Font.GothamBlack
+	label.TextScaled = false
+	label.TextSize = if hasCustomToolbar then 32 else 52
+	local hudSize = label.TextSize
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2
+	stroke.Thickness = if hasCustomToolbar then 2 else 3
 	stroke.Color = Color3.fromRGB(35, 24, 6)
 	stroke.Transparency = 0
 	stroke.Parent = label
@@ -1481,7 +1480,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	TweenService:Create(
 		scale,
 		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1 }
+		{ Scale = if hasCustomToolbar then 1 else 1.2 }
 	):Play()
 
 	local startX, startY = startPos.X.Offset, startPos.Y.Offset
@@ -3159,8 +3158,8 @@ local function init()
 			local gain = player:GetAttribute("WorkoutLastGain")
 			local g = if typeof(gain) == "number" then gain else 0
 			if g > 0 then
-				if not hasCustomToolbar and typeof(GameSoundEffects.playWorkoutPowerUp) == "function" then
-					GameSoundEffects.playWorkoutPowerUp()
+				if not hasCustomToolbar and typeof(GameSoundEffects.playWorkoutTickShake) == "function" then
+					GameSoundEffects.playWorkoutTickShake()
 				end
 				local ok, err = pcall(spawnPowerFloater, g)
 				if not ok then

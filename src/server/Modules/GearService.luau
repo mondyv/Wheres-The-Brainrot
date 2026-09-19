@@ -433,27 +433,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		local tool = GearService.findGearTool(player, gearId)
-		local backpack = player:FindFirstChildOfClass("Backpack")
-		if kitPlayer(player) then
-			if not tool then
-				GearService.ensureTools(player)
-				tool = GearService.findGearTool(player, gearId)
-			end
-			if tool then
-				tool.RequiresHandle = false
-				tool.ManualActivationOnly = true
-				if backpack and tool.Parent == backpack then
-					local hum = char:FindFirstChildOfClass("Humanoid")
-					if hum then
-						warn("[WK-03] gear left character — putting it back")
-						pcall(function()
-							hum:EquipTool(tool)
-						end)
-					end
-				end
-			end
-			session.droppedAt = nil
-		elseif not tool or tool.Parent ~= char then
+		if not tool or tool.Parent ~= char then
 			local droppedAt = session.droppedAt
 			if droppedAt == nil then
 				session.droppedAt = os.clock()
@@ -464,9 +444,8 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			end
 			GearService.stopWorkout(player)
 			return
-		else
-			session.droppedAt = nil
 		end
+		session.droppedAt = nil
 		local now = os.clock()
 		local combo = comboOf(player)
 		local lift = GearConfig.workoutLiftMultiplier(combo)
@@ -513,23 +492,9 @@ local function bindPlayer(player: Player)
 	local conns: { RBXScriptConnection } = {}
 	table.insert(
 		conns,
-		player.CharacterAdded:Connect(function(character)
+		player.CharacterAdded:Connect(function()
 			task.defer(function()
 				GearService.ensureTools(player)
-				if not kitPlayer(player) then
-					return
-				end
-				local equipped = player:GetAttribute(GearConfig.EQUIPPED_GEAR_ATTR)
-				local gearId = if typeof(equipped) == "number" then math.floor(equipped) else 0
-				local tool = GearService.findGearTool(player, gearId)
-				local hum = character:FindFirstChildOfClass("Humanoid")
-				if hum and tool then
-					tool.RequiresHandle = false
-					pcall(function()
-						hum:EquipTool(tool)
-					end)
-					print("[WK-02] auto-equipped", tool.Name)
-				end
 			end)
 		end)
 	)

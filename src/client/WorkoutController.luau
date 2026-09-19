@@ -2236,6 +2236,50 @@ local function paintComboIdle(appear: boolean?)
 	end
 end
 
+local function stopComboShake()
+	if comboShakeConn then
+		comboShakeConn:Disconnect()
+		comboShakeConn = nil
+	end
+end
+
+local function hideApproachTrail()
+	local gui = doubleTapGui
+	local layer = gui and gui:FindFirstChild("ApproachTrail")
+	if not layer then
+		return
+	end
+	local line = layer:FindFirstChild("ApproachLine")
+	if line and line:IsA("GuiObject") then
+		line.Visible = false
+		line.BackgroundTransparency = 1
+	end
+	local glow = layer:FindFirstChild("ApproachGlow")
+	if glow and glow:IsA("GuiObject") then
+		glow.Visible = false
+		glow.BackgroundTransparency = 1
+	end
+	for _, ch in layer:GetChildren() do
+		if string.sub(ch.Name, 1, 3) ~= "Pip" or not ch:IsA("Frame") then
+			continue
+		end
+		ch.Visible = false
+		ch.BackgroundTransparency = 1
+		local stroke = ch:FindFirstChild("PipStroke")
+		if stroke and stroke:IsA("UIStroke") then
+			stroke.Transparency = 1
+		end
+	end
+end
+
+local function stopComboTrail()
+	if comboTrailConn then
+		comboTrailConn:Disconnect()
+		comboTrailConn = nil
+	end
+	hideApproachTrail()
+end
+
 local function isComboCapped(n: number?): boolean
 	local count = n or comboDisplay()
 	return comboMaxLocked or count >= GearConfig.WORKOUT_COMBO_MAX
@@ -2322,50 +2366,6 @@ local function paintMaxComboPulse()
 		local bob = math.sin(os.clock() * 2.4) * 5
 		holder.Position = UDim2.fromOffset(lastComboPos.X, lastComboPos.Y + bob)
 	end
-end
-
-local function stopComboShake()
-	if comboShakeConn then
-		comboShakeConn:Disconnect()
-		comboShakeConn = nil
-	end
-end
-
-local function hideApproachTrail()
-	local gui = doubleTapGui
-	local layer = gui and gui:FindFirstChild("ApproachTrail")
-	if not layer then
-		return
-	end
-	local line = layer:FindFirstChild("ApproachLine")
-	if line and line:IsA("GuiObject") then
-		line.Visible = false
-		line.BackgroundTransparency = 1
-	end
-	local glow = layer:FindFirstChild("ApproachGlow")
-	if glow and glow:IsA("GuiObject") then
-		glow.Visible = false
-		glow.BackgroundTransparency = 1
-	end
-	for _, ch in layer:GetChildren() do
-		if string.sub(ch.Name, 1, 3) ~= "Pip" or not ch:IsA("Frame") then
-			continue
-		end
-		ch.Visible = false
-		ch.BackgroundTransparency = 1
-		local stroke = ch:FindFirstChild("PipStroke")
-		if stroke and stroke:IsA("UIStroke") then
-			stroke.Transparency = 1
-		end
-	end
-end
-
-local function stopComboTrail()
-	if comboTrailConn then
-		comboTrailConn:Disconnect()
-		comboTrailConn = nil
-	end
-	hideApproachTrail()
 end
 
 local function shakeComboHold(basePos: UDim2)
@@ -3057,27 +3057,7 @@ local function bindTool(tool: Tool)
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
-			if hasCustomToolbar then
-				onUnequip()
-				return
-			end
-			warn("[WK-04] tool unequipped parent=", tool.Parent and tool.Parent.Name)
-			task.defer(function()
-				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-					return
-				end
-				local character = player.Character
-				local hum = getHumanoid(character)
-				local backpack = player:FindFirstChildOfClass("Backpack")
-				if hum and backpack and tool.Parent == backpack then
-					tool.ManualActivationOnly = true
-					tool.RequiresHandle = false
-					warn("[WK-04] putting gear back in hand")
-					pcall(function()
-						hum:EquipTool(tool)
-					end)
-				end
-			end)
+			onUnequip()
 		end)
 	)
 
@@ -3148,9 +3128,6 @@ local function init()
 	scanTools(backpack)
 	if not hasCustomToolbar then
 		print("[WorkoutController] KIT_FLOATER_FIX_2")
-		pcall(function()
-			game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-		end)
 	end
 	backpack.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then

@@ -150,20 +150,6 @@ local function initPlayer(player: Player)
 		GearService.grantGear(player, 1, true)
 	end
 	GearService.ensureTools(player)
-	if not PlayerDataService then
-		local char = player.Character
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		local equipped = player:GetAttribute(GearConfig.EQUIPPED_GEAR_ATTR)
-		local gearId = if typeof(equipped) == "number" then math.floor(equipped) else 0
-		local tool = GearService.findGearTool(player, gearId)
-		if hum and tool then
-			tool.RequiresHandle = false
-			pcall(function()
-				hum:EquipTool(tool)
-			end)
-			print("[WK-02] auto-equipped", tool.Name)
-		end
-	end
 	print("[Gears] tools ready for", player.Name, "equipped", player:GetAttribute(GearConfig.EQUIPPED_GEAR_ATTR))
 end
 

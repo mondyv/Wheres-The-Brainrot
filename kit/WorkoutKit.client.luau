@@ -29,13 +29,6 @@ pcall(function()
 end)
 print("[WorkoutKit] hud bind")
 
-local StarterGui = game:GetService("StarterGui")
-local Players = game:GetService("Players")
-pcall(function()
-	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-end)
-print("[WK-01] default backpack hotbar hidden — tap the on-screen ring")
-
 local function boot(name: string)
 	local child = parent:FindFirstChild(name)
 	if not child then

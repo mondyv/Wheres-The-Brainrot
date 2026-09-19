@@ -1450,14 +1450,22 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	label.LayoutOrder = 1
 	label.ZIndex = 91
 	label.Parent = row
-	-- Pixel body font + UITextSizeConstraint kept the flying +N tiny. Use a
-	-- display face and skip the constraint so TextSize actually shows.
-	label.Font = Enum.Font.GothamBlack
+	-- Match Power Amount (kit HUD is GothamBold 28). Skip the pixel-font cap.
+	label.Font = Enum.Font.GothamBold
 	label.TextScaled = false
-	label.TextSize = if hasCustomToolbar then 32 else 52
-	local hudSize = label.TextSize
+	local hudSize = 28
+	if amountLabel and amountLabel:IsA("TextLabel") then
+		local amt = amountLabel :: TextLabel
+		label.Font = amt.Font
+		if amt.TextScaled then
+			hudSize = math.clamp(math.floor(amt.AbsoluteSize.Y * 0.72), 16, 36)
+		elseif amt.TextSize > 0 then
+			hudSize = amt.TextSize
+		end
+	end
+	label.TextSize = hudSize
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = if hasCustomToolbar then 2 else 3
+	stroke.Thickness = if hasCustomToolbar then 2 else 2
 	stroke.Color = Color3.fromRGB(35, 24, 6)
 	stroke.Transparency = 0
 	stroke.Parent = label
@@ -1480,7 +1488,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	TweenService:Create(
 		scale,
 		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = if hasCustomToolbar then 1 else 1.2 }
+		{ Scale = 1 }
 	):Play()
 
 	local startX, startY = startPos.X.Offset, startPos.Y.Offset

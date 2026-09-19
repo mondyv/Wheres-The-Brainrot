@@ -87,6 +87,15 @@ local PURCHASE_SHAKE_POS = 0.14
 local PURCHASE_SHAKE_SPEED = 13
 local PURCHASE_SHAKE_DURATION = 0.42
 
+local workoutShakeBound = false
+local workoutShakeEndAt = 0.0
+local workoutShakeDuration = 0.3
+local workoutShakeAmp = 0.12
+local workoutShakeKickY = 0.0
+local workoutShakeSpeed = 28
+local workoutShakePriority = 0
+local WORKOUT_SHAKE_STEP = "WorkoutKitCameraShake"
+
 local BUSH_RANDOM_SHAKE_MAX_DIST = 58
 local BUSH_RANDOM_SHAKE_PITCH_MIN = 0.94
 local BUSH_RANDOM_SHAKE_PITCH_MAX = 1.06
@@ -164,7 +173,7 @@ local function playTemplate(template: Sound?)
 	end)
 end
 
-local function playTemplatePitched(template: Sound?, playbackSpeed: number)
+local function playTemplatePitched(template: Sound?, playbackSpeed: number, volumeScale: number?)
 	if not template then
 		return
 	end
@@ -173,6 +182,9 @@ local function playTemplatePitched(template: Sound?, playbackSpeed: number)
 	end
 	local clone = prepareClone(template)
 	clone.PlaybackSpeed = math.clamp(playbackSpeed, 0.7, 2)
+	if typeof(volumeScale) == "number" then
+		clone.Volume = clone.Volume * math.clamp(volumeScale, 0.05, 2)
+	end
 	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
@@ -323,6 +335,58 @@ local function startPurchaseCameraShake(durationSec: number?, amp: number?)
 			(math.noise(t, 0.5, 0) - 0.5) * 2 * ampNow,
 			(math.noise(0.5, t, 1.5) - 0.5) * 2 * ampNow,
 			(math.noise(t, 2.5, 0.5) - 0.5) * 2 * ampNow * 0.35
+		)
+	end)
+end
+
+local function stopWorkoutCameraShake()
+	if workoutShakeBound then
+		pcall(function()
+			RunService:UnbindFromRenderStep(WORKOUT_SHAKE_STEP)
+		end)
+		workoutShakeBound = false
+	end
+	workoutShakePriority = 0
+	local hum = getLocalHumanoid()
+	if hum then
+		hum.CameraOffset = Vector3.zero
+	end
+end
+
+-- Instant punch then decaying rumble (no slow ramp — that felt like a delayed tick).
+local function startWorkoutCameraShake(durationSec: number, amp: number, kickY: number, speed: number, priority: number)
+	if workoutShakeBound and os.clock() < workoutShakeEndAt and priority < workoutShakePriority then
+		return
+	end
+	workoutShakeDuration = math.max(0.12, durationSec)
+	workoutShakeAmp = math.max(0.01, amp)
+	workoutShakeKickY = kickY
+	workoutShakeSpeed = math.max(8, speed)
+	workoutShakePriority = priority
+	workoutShakeEndAt = os.clock() + workoutShakeDuration
+	if workoutShakeBound then
+		return
+	end
+	workoutShakeBound = true
+	RunService:BindToRenderStep(WORKOUT_SHAKE_STEP, Enum.RenderPriority.Camera.Value + 54, function()
+		if os.clock() >= workoutShakeEndAt then
+			stopWorkoutCameraShake()
+			return
+		end
+		local hum = getLocalHumanoid()
+		if not hum then
+			return
+		end
+		local remaining = workoutShakeEndAt - os.clock()
+		local elapsed = workoutShakeDuration - remaining
+		local u = math.clamp(elapsed / workoutShakeDuration, 0, 1)
+		local envelope = math.exp(-u * 4.4)
+		local kick = workoutShakeKickY * math.clamp(1 - elapsed / 0.08, 0, 1)
+		local t = os.clock() * workoutShakeSpeed
+		hum.CameraOffset = Vector3.new(
+			(math.noise(t, 0.15, 2.2) - 0.5) * 2 * workoutShakeAmp * envelope,
+			kick + (math.noise(1.4, t, 0.7) - 0.5) * 2 * workoutShakeAmp * envelope * 0.9,
+			(math.noise(t, 3.1, 1.2) - 0.5) * 2 * workoutShakeAmp * envelope * 0.45
 		)
 	end)
 end
@@ -613,20 +677,26 @@ function GameSoundEffects.playLifting()
 	playTemplate(liftingTemplate)
 end
 
-function GameSoundEffects.playWorkoutPowerUp()
+function GameSoundEffects.playWorkoutPowerUp(stage: number?)
+	local first = (if typeof(stage) == "number" then stage else 1) <= 1
 	if not powerUpTemplate then
 		local root = SoundService:FindFirstChild("SoundEffects")
 		powerUpTemplate = resolveSoundNode(root and root:FindFirstChild("Power Up"))
 	end
 	if powerUpTemplate then
 		local pitch = 0.92 + math.random() * 0.16
-		playTemplatePitched(powerUpTemplate, pitch)
+		playTemplatePitched(powerUpTemplate, pitch, if first then 0.55 else 1)
 	end
-	startPurchaseCameraShake(0.34, 0.15)
+	if first then
+		startWorkoutCameraShake(0.42, 0.28, -0.2, 36, 2)
+	else
+		startWorkoutCameraShake(0.52, 0.44, -0.34, 42, 3)
+	end
 end
 
 function GameSoundEffects.playWorkoutTickShake()
-	startPurchaseCameraShake(0.12, 0.028)
+	-- Weight-drop bump: dip then rumble, not a 1-frame tick.
+	startWorkoutCameraShake(0.22, 0.09, -0.07, 24, 1)
 end
 
 local function resolveComboSfxFolder(): Instance?

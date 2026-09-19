@@ -1714,7 +1714,8 @@ local function attachComboAura(plr: Player, watch: ComboWatch, character: Model,
 		if sfxMod then
 			local sfxOk, sfx = pcall(require, sfxMod)
 			if sfxOk and typeof(sfx) == "table" and typeof(sfx.playWorkoutPowerUp) == "function" then
-				sfx.playWorkoutPowerUp()
+				local stage = if folderName == "5-15" then 1 else 2
+				sfx.playWorkoutPowerUp(stage)
 			elseif not sfxOk then
 				warn("[OtherVfxController] GameSoundEffects:", sfx)
 			end

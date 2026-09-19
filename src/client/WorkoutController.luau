@@ -1292,27 +1292,23 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 end
 
 local function resolveHudGui(): ScreenGui?
-	local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 8)
+	local pg = player:FindFirstChild("PlayerGui")
 	if not pg then
 		return nil
 	end
 	local main = pg:FindFirstChild("Main")
 	if main and main:IsA("ScreenGui") then
-		return main
+		local power = findPowerFrame(main)
+		if power then
+			return main
+		end
 	end
 	local kit = pg:FindFirstChild("WorkoutPowerHud")
 	if kit and kit:IsA("ScreenGui") then
 		return kit
 	end
-	if PlayerGuiMain and typeof(PlayerGuiMain.ensure) == "function" then
-		local ok, gui = pcall(PlayerGuiMain.ensure, player)
-		if ok and gui and gui:IsA("ScreenGui") then
-			return gui
-		end
-	end
-	kit = pg:WaitForChild("WorkoutPowerHud", 4)
-	if kit and kit:IsA("ScreenGui") then
-		return kit
+	if main and main:IsA("ScreenGui") then
+		return main
 	end
 	return nil
 end

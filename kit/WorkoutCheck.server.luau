@@ -19,7 +19,7 @@ local function bad(msg: string)
 end
 
 print("========== WORKOUT KIT CHECK ==========")
-task.wait(0.5)
+task.wait(2)
 
 if not script:IsDescendantOf(ServerScriptService) then
 	bad("MOVE WorkoutCheck into ServerScriptService (it is in the wrong folder)")
@@ -32,11 +32,18 @@ else
 	bad("Move Gears into ServerScriptService as a server Script — StarterPlayerScripts will never run it")
 end
 
-local gearService = ServerScriptService:FindFirstChild("GearService", true)
-if gearService and gearService:IsA("ModuleScript") then
+local gearCopies = 0
+for _, d in ServerScriptService:GetDescendants() do
+	if d.Name == "GearService" and d:IsA("ModuleScript") then
+		gearCopies += 1
+	end
+end
+if gearCopies > 1 then
+	bad("Two GearService modules — delete ServerScriptService.GearService, keep Modules.GearService")
+elseif gearCopies == 1 then
 	ok("ServerScriptService.GearService")
 else
-	bad("Move GearService ModuleScript into ServerScriptService (next to Gears)")
+	bad("Move GearService ModuleScript into ServerScriptService.Modules")
 end
 
 local cash = ServerScriptService:FindFirstChild("WorkoutCash", true)
@@ -101,7 +108,7 @@ end
 
 print("----------------------------------------")
 if missing == 0 then
-	print("[WorkoutCheck] Ready. Top-left Power + SHOP. Equip Tree Branch from the backpack.")
+	print("[WorkoutCheck] Ready. Bottom Power + SHOP. Equip Tree Branch from the backpack.")
 else
 	warn("[WorkoutCheck]", missing, "problem(s).")
 end

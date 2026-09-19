@@ -330,17 +330,30 @@ local function closeNamedFrame(name: string)
 	end
 end
 
--- Kit only (no HUDController): hide the full game HUD. Power + SHOP live on WorkoutPowerHud.
+-- Kit: keep the bottom Power (and Cash) counters so +power floaters land on them.
 local function stripKitHud(main: ScreenGui)
 	if HUD then
 		return
 	end
 	main.Enabled = true
 	main.ResetOnSpawn = false
-	main.DisplayOrder = 10
 	local side = main:FindFirstChild("SideUI")
 	if side and side:IsA("GuiObject") then
-		(side :: GuiObject).Visible = false
+		(side :: GuiObject).Visible = true
+		for _, ch in side:GetChildren() do
+			if ch.Name == "Counters" then
+				if ch:IsA("GuiObject") then
+					(ch :: GuiObject).Visible = true
+				end
+				for _, item in ch:GetChildren() do
+					if item:IsA("GuiObject") then
+						(item :: GuiObject).Visible = item.Name == "Power" or item.Name == "Cash"
+					end
+				end
+			elseif ch:IsA("GuiObject") then
+				(ch :: GuiObject).Visible = false
+			end
+		end
 	end
 	local frames = main:FindFirstChild("Frames")
 	if frames then
@@ -372,14 +385,18 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 	end
 	local screen = gui :: ScreenGui
 	local power = screen:FindFirstChild("Power")
+	if power and power:IsA("GuiObject") then
+		power.AnchorPoint = Vector2.new(0.5, 1)
+		power.Position = UDim2.new(0.5, 0, 1, -20)
+	end
 	if not (power and power:IsA("Frame")) then
 		local frame = Instance.new("Frame")
 		frame.Name = "Power"
 		frame.BackgroundColor3 = Color3.fromRGB(20, 16, 28)
 		frame.BackgroundTransparency = 0.2
 		frame.BorderSizePixel = 0
-		frame.AnchorPoint = Vector2.new(0, 0)
-		frame.Position = UDim2.fromOffset(16, 16)
+		frame.AnchorPoint = Vector2.new(0.5, 1)
+		frame.Position = UDim2.new(0.5, 0, 1, -20)
 		frame.Size = UDim2.fromOffset(280, 64)
 		frame.Visible = true
 		frame.ZIndex = 50
@@ -1886,23 +1903,10 @@ local function wirePowerEdit(powerFrame: Instance, main: ScreenGui?)
 end
 
 local function init()
-	if not HUD then
-		local _hud, kitPower, kitAmount = createMinimalPowerHud()
-		powerAmountLabel = kitAmount
-		updatePowerLabel()
-		if kitPower:IsA("GuiObject") then
-			wirePowerEdit(kitPower, nil)
-			addShopButton(kitPower, nil)
-			print("[WeightUpgrades] Power + SHOP should be top-left of the screen")
-		end
-	end
-
 	local main = waitMain()
 	if main then
 		MainGradientButtons.init(main)
-		if not HUD then
-			stripKitHud(main)
-		end
+		stripKitHud(main)
 	end
 
 	local frames = main and main:FindFirstChild("Frames")
@@ -1917,30 +1921,29 @@ local function init()
 
 	local amountLabel: TextLabel? = nil
 	local powerFrame: Instance? = nil
-	if HUD then
-		local sideUI = main and main:FindFirstChild("SideUI")
-		local counters = sideUI and sideUI:FindFirstChild("Counters")
-		if counters then
-			local cashFrame = counters:FindFirstChild("Cash")
-			local cashAmount = cashFrame and cashFrame:FindFirstChild("Amount")
-			if cashAmount and cashAmount:IsA("TextLabel") then
-				amountLabel = cashAmount
-				cashAmountLabel = cashAmount
-				amountBaseColor = cashAmount.TextColor3
-				local cash0 = player:GetAttribute("Cash")
-				lastShownCash = if typeof(cash0) == "number" then cash0 else 0
-				cashAmount.Text = formatCash(lastShownCash)
-			end
-			powerAmountLabel = ensurePowerCounter(counters)
-			powerFrame = counters:FindFirstChild("Power")
+	local sideUI = main and main:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
+	if counters then
+		local cashFrame = counters:FindFirstChild("Cash")
+		local cashAmount = cashFrame and cashFrame:FindFirstChild("Amount")
+		if cashAmount and cashAmount:IsA("TextLabel") then
+			amountLabel = cashAmount
+			cashAmountLabel = cashAmount
+			amountBaseColor = cashAmount.TextColor3
+			local cash0 = player:GetAttribute("Cash")
+			lastShownCash = if typeof(cash0) == "number" then cash0 else 0
+			cashAmount.Text = formatCash(lastShownCash)
 		end
+		powerAmountLabel = ensurePowerCounter(counters)
+		powerFrame = counters:FindFirstChild("Power")
+		print("[WeightUpgrades] Power + SHOP at the bottom counter")
 	end
 
 	if not powerAmountLabel then
 		local _hud, kitPower, kitAmount = createMinimalPowerHud()
 		powerAmountLabel = kitAmount
 		powerFrame = kitPower
-		print("[WeightUpgrades] Power HUD + SHOP ready (top-left)")
+		print("[WeightUpgrades] Power HUD + SHOP ready (bottom)")
 	end
 	updatePowerLabel()
 	if powerFrame and powerFrame:IsA("GuiObject") then
@@ -1948,7 +1951,7 @@ local function init()
 		addShopButton(powerFrame :: GuiObject, if HUD then main else nil)
 	end
 
-	if not HUD then
+	if not HUD and not counters then
 		player.CharacterAdded:Connect(function()
 			task.defer(function()
 				createMinimalPowerHud()
@@ -2059,14 +2062,7 @@ local function init()
 	} do
 		player:GetAttributeChangedSignal(attr):Connect(function()
 			if attr == GearConfig.POWER_ATTR or attr == GearConfig.POWER_EDITED_ATTR then
-				if
-					attr == GearConfig.POWER_ATTR
-					and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true
-				then
-					updatePowerLabel({ deferWorkout = true })
-				else
-					updatePowerLabel({ instant = true })
-				end
+				updatePowerLabel({ instant = true })
 			end
 			if shopVisible() then
 				queueRefreshAllRows()

@@ -69,20 +69,28 @@ local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local WorkoutCompat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutCompat"))
 
 local function requireGearService(): any
-	local StarterPlayer = game:GetService("StarterPlayer")
-	local candidates: { Instance? } = {}
-	local modules = script.Parent:FindFirstChild("Modules")
-	table.insert(candidates, modules and modules:FindFirstChild("GearService"))
-	table.insert(candidates, script.Parent:FindFirstChild("GearService"))
-	table.insert(candidates, ServerScriptService:FindFirstChild("GearService"))
-	local sps = StarterPlayer:FindFirstChild("StarterPlayerScripts")
-	table.insert(candidates, sps and sps:FindFirstChild("GearService"))
-	for _, target in candidates do
-		if target and target:IsA("ModuleScript") then
-			return require(target)
+	local found: { ModuleScript } = {}
+	local function consider(inst: Instance?)
+		if inst and inst:IsA("ModuleScript") then
+			for _, already in found do
+				if already == inst then
+					return
+				end
+			end
+			table.insert(found, inst)
 		end
 	end
-	error("[Gears] GearService missing — put the ModuleScript in ServerScriptService next to Gears")
+	local modules = script.Parent:FindFirstChild("Modules")
+	consider(modules and modules:FindFirstChild("GearService"))
+	consider(script.Parent:FindFirstChild("GearService"))
+	if #found > 1 then
+		warn("[Gears] Extra GearService — delete ServerScriptService.GearService and keep Modules.GearService")
+	end
+	if found[1] then
+		print("[Gears] loading", found[1]:GetFullName())
+		return require(found[1])
+	end
+	error("[Gears] GearService missing — put the ModuleScript in ServerScriptService.Modules")
 end
 
 local gsOk, gsOrErr = pcall(requireGearService)

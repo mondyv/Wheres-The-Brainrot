@@ -47,4 +47,4 @@ task.spawn(function()
 		warn("[WorkoutKit] StartWorkout remote missing")
 	end
 end)
-print("[WorkoutKit] done — gold Power + green SHOP at top-left")
+print("[WorkoutKit] done — Power + SHOP at the bottom")

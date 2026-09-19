@@ -75,7 +75,7 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 	end
 	local tool = Instance.new("Tool")
 	tool.Name = GearConfig.uiName(def)
-	tool.RequiresHandle = true
+	tool.RequiresHandle = false
 	tool.CanBeDropped = false
 	-- Clicks go to the combo UI; activating the tool would unequip on a default hotbar.
 	tool.ManualActivationOnly = true
@@ -335,7 +335,7 @@ function GearService.stopWorkout(player: Player)
 	player:SetAttribute("WorkoutCombo", 1)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, false)
 	local tool = GearService.findGearTool(player, session.gearId)
-	if tool and tool.Parent and tool.Parent:IsA("Backpack") then
+	if tool and tool.Parent and tool.Parent:IsA("Backpack") and player:GetAttribute("WorkoutKit") ~= true then
 		tool.RequiresHandle = true
 	end
 	task.defer(function()
@@ -426,29 +426,37 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		local tool = GearService.findGearTool(player, gearId)
-		if not tool or tool.Parent ~= char then
-			local backpack = player:FindFirstChildOfClass("Backpack")
-			local kit = player:GetAttribute("WorkoutKit") == true
-			if kit and tool and backpack and tool.Parent == backpack then
+		local backpack = player:FindFirstChildOfClass("Backpack")
+		local kit = player:GetAttribute("WorkoutKit") == true or LevelService == nil
+		if kit then
+			if not tool then
+				GearService.ensureTools(player)
+				tool = GearService.findGearTool(player, gearId)
+			end
+			if tool and backpack and tool.Parent == backpack then
 				local hum = char:FindFirstChildOfClass("Humanoid")
 				if hum then
 					pcall(function()
 						hum:EquipTool(tool)
 					end)
 				end
-				session.droppedAt = nil
-			else
-				local droppedAt = session.droppedAt
-				if droppedAt == nil then
-					session.droppedAt = os.clock()
-					return
-				end
-				if os.clock() - droppedAt < 0.6 then
-					return
-				end
-				GearService.stopWorkout(player)
+			end
+			if tool then
+				tool.RequiresHandle = false
+				tool.ManualActivationOnly = true
+			end
+			session.droppedAt = nil
+		elseif not tool or tool.Parent ~= char then
+			local droppedAt = session.droppedAt
+			if droppedAt == nil then
+				session.droppedAt = os.clock()
 				return
 			end
+			if os.clock() - droppedAt < 0.6 then
+				return
+			end
+			GearService.stopWorkout(player)
+			return
 		else
 			session.droppedAt = nil
 		end

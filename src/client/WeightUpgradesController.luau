@@ -456,6 +456,10 @@ local function addShopButton(parent: GuiObject, main: ScreenGui?)
 	corner.CornerRadius = UDim.new(0, 6)
 	corner.Parent = btn
 	btn.Activated:Connect(function()
+		local wc = WorkoutCompat.tryRequire(script.Parent, "WorkoutController")
+		if wc and typeof(wc.stopActiveWorkout) == "function" then
+			wc.stopActiveWorkout()
+		end
 		openNamedFrame("Upgrades")
 	end)
 end

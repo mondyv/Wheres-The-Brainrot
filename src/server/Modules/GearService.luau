@@ -14,6 +14,10 @@ local RebirthConfig = WorkoutCompat.shared("RebirthConfig")
 local StoreConfig = WorkoutCompat.shared("StoreConfig")
 local LevelService = WorkoutCompat.tryRequire(script.Parent, "LevelService")
 
+local function kitPlayer(player: Player): boolean
+	return player:GetAttribute("WorkoutKit") == true or LevelService == nil
+end
+
 local GearService = {}
 
 local workoutSessions: { [Player]: { gearId: number, conn: RBXScriptConnection?, lastTick: number } } = {}
@@ -325,6 +329,9 @@ function GearService.stopWorkout(player: Player)
 	if not session then
 		return
 	end
+	if kitPlayer(player) then
+		warn("[WK-STOP] workout ended", player.Name, debug.info(2, "s"), debug.info(2, "n"), debug.info(2, "l"))
+	end
 	if session.conn then
 		session.conn:Disconnect()
 		session.conn = nil
@@ -427,20 +434,22 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		end
 		local tool = GearService.findGearTool(player, gearId)
 		local backpack = player:FindFirstChildOfClass("Backpack")
-		local kit = player:GetAttribute("WorkoutKit") == true or LevelService == nil
-		if kit then
+		if kitPlayer(player) then
 			if not tool then
 				GearService.ensureTools(player)
 				tool = GearService.findGearTool(player, gearId)
 			end
-			if tool and backpack and tool.Parent == backpack then
-				local hum = char:FindFirstChildOfClass("Humanoid")
-				if hum then
-					tool.RequiresHandle = false
-					tool.ManualActivationOnly = true
-					pcall(function()
-						hum:EquipTool(tool)
-					end)
+			if tool then
+				tool.RequiresHandle = false
+				tool.ManualActivationOnly = true
+				if backpack and tool.Parent == backpack then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						warn("[WK-03] gear left character — putting it back")
+						pcall(function()
+							hum:EquipTool(tool)
+						end)
+					end
 				end
 			end
 			session.droppedAt = nil
@@ -504,9 +513,23 @@ local function bindPlayer(player: Player)
 	local conns: { RBXScriptConnection } = {}
 	table.insert(
 		conns,
-		player.CharacterAdded:Connect(function()
+		player.CharacterAdded:Connect(function(character)
 			task.defer(function()
 				GearService.ensureTools(player)
+				if not kitPlayer(player) then
+					return
+				end
+				local equipped = player:GetAttribute(GearConfig.EQUIPPED_GEAR_ATTR)
+				local gearId = if typeof(equipped) == "number" then math.floor(equipped) else 0
+				local tool = GearService.findGearTool(player, gearId)
+				local hum = character:FindFirstChildOfClass("Humanoid")
+				if hum and tool then
+					tool.RequiresHandle = false
+					pcall(function()
+						hum:EquipTool(tool)
+					end)
+					print("[WK-02] auto-equipped", tool.Name)
+				end
 			end)
 		end)
 	)

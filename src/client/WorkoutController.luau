@@ -2653,6 +2653,7 @@ local function missCombo(fromPress: boolean?)
 		return
 	end
 	comboBusyAnim = true
+	warn("[WK-05] combo miss → 1 (keep curling)")
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
 	playComboFailSfx(fromPress == true)
@@ -2959,6 +2960,9 @@ local function cleanupWorkoutVisuals()
 end
 
 local function onUnequip()
+	if not hasCustomToolbar then
+		warn("[WK-06] stopActiveWorkout")
+	end
 	-- Stop the grip-killer before the remote yield so a just-equipped
 	-- brainrot can keep its RightGrip.
 	cleanupWorkoutVisuals()
@@ -3057,7 +3061,7 @@ local function bindTool(tool: Tool)
 				onUnequip()
 				return
 			end
-			-- Kit: a miss / RightGrip drop must not put the gear away.
+			warn("[WK-04] tool unequipped parent=", tool.Parent and tool.Parent.Name)
 			task.defer(function()
 				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 					return
@@ -3068,6 +3072,7 @@ local function bindTool(tool: Tool)
 				if hum and backpack and tool.Parent == backpack then
 					tool.ManualActivationOnly = true
 					tool.RequiresHandle = false
+					warn("[WK-04] putting gear back in hand")
 					pcall(function()
 						hum:EquipTool(tool)
 					end)
@@ -3143,6 +3148,9 @@ local function init()
 	scanTools(backpack)
 	if not hasCustomToolbar then
 		print("[WorkoutController] KIT_FLOATER_FIX_2")
+		pcall(function()
+			game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+		end)
 	end
 	backpack.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then

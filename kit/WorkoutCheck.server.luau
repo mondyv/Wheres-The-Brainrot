@@ -106,6 +106,31 @@ else
 	bad("SoundService.SoundEffects")
 end
 
+local starterChar = StarterPlayer:FindFirstChild("StarterCharacterScripts")
+if starterChar then
+	for _, ch in starterChar:GetChildren() do
+		if ch:IsA("LuaSourceContainer") then
+			bad("WK-07 extra script in StarterCharacterScripts: " .. ch.Name .. " — delete it")
+		end
+	end
+end
+
+local starterPack = game:GetService("StarterPack")
+if starterPack then
+	for _, ch in starterPack:GetChildren() do
+		bad("WK-08 extra item in StarterPack: " .. ch.Name .. " — delete it")
+	end
+end
+
+local workspaceGears = workspace:FindFirstChild("Gears")
+if workspaceGears then
+	for _, d in workspaceGears:GetDescendants() do
+		if d:IsA("LuaSourceContainer") then
+			bad("WK-09 script inside Workspace.Gears: " .. d:GetFullName() .. " — meshes must come from EssentialAssets.Gears")
+		end
+	end
+end
+
 print("----------------------------------------")
 if missing == 0 then
 	print("[WorkoutCheck] Ready. Bottom Power + SHOP. Equip Tree Branch from the backpack.")

@@ -433,7 +433,26 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		local tool = GearService.findGearTool(player, gearId)
-		if not tool or tool.Parent ~= char then
+		if kitPlayer(player) then
+			local backpack = player:FindFirstChildOfClass("Backpack")
+			if not tool then
+				GearService.ensureTools(player)
+				tool = GearService.findGearTool(player, gearId)
+			end
+			if tool then
+				tool.RequiresHandle = false
+				tool.ManualActivationOnly = true
+				if backpack and tool.Parent == backpack then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						pcall(function()
+							hum:EquipTool(tool)
+						end)
+					end
+				end
+			end
+			session.droppedAt = nil
+		elseif not tool or tool.Parent ~= char then
 			local droppedAt = session.droppedAt
 			if droppedAt == nil then
 				session.droppedAt = os.clock()

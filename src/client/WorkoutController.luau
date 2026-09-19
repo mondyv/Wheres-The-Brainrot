@@ -3057,7 +3057,28 @@ local function bindTool(tool: Tool)
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
-			onUnequip()
+			if hasCustomToolbar then
+				onUnequip()
+				return
+			end
+			-- Default hotbar / missing RightGrip drops the tool after a miss.
+			-- Put it back. Use the STOP button to actually end the curl.
+			task.defer(function()
+				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+					return
+				end
+				local character = player.Character
+				local hum = getHumanoid(character)
+				local backpack = player:FindFirstChildOfClass("Backpack")
+				if hum and backpack and tool.Parent == backpack then
+					tool.ManualActivationOnly = true
+					tool.RequiresHandle = false
+					warn("[WK-04] tool dropped after miss — keeping curl")
+					pcall(function()
+						hum:EquipTool(tool)
+					end)
+				end
+			end)
 		end)
 	)
 

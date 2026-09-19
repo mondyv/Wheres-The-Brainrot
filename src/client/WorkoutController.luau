@@ -1,4 +1,5 @@
 -- [ACTIVE] WorkoutController
+-- KIT_FLOATER_FIX_2
 -- Gear activate: bar across both feet during curl, white flash, +power floaters into HUD.
 -- Optional modules (HUD, sfx, fonts) are skipped on a baseplate kit so this
 -- still boots. This game already has every module, so play is unchanged.
@@ -1307,22 +1308,17 @@ local function findPowerFrame(host: ScreenGui): GuiObject?
 	return nil
 end
 
+-- No other local calls in here — a later `local function` is nil if used above it.
 local function resolveHudGui(): ScreenGui?
 	local pg = player:FindFirstChild("PlayerGui")
 	if not pg then
 		return nil
 	end
-	local main = pg:FindFirstChild("Main")
-	if main and main:IsA("ScreenGui") then
-		local power = findPowerFrame(main)
-		if power then
-			return main
-		end
-	end
 	local kit = pg:FindFirstChild("WorkoutPowerHud")
 	if kit and kit:IsA("ScreenGui") then
 		return kit
 	end
+	local main = pg:FindFirstChild("Main")
 	if main and main:IsA("ScreenGui") then
 		return main
 	end
@@ -3162,6 +3158,9 @@ local function init()
 		return
 	end
 	scanTools(backpack)
+	if not hasCustomToolbar then
+		print("[WorkoutController] KIT_FLOATER_FIX_2")
+	end
 	backpack.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then
 			bindTool(child)
@@ -3192,7 +3191,10 @@ local function init()
 			local gain = player:GetAttribute("WorkoutLastGain")
 			local g = if typeof(gain) == "number" then gain else 0
 			if g > 0 then
-				spawnPowerFloater(g)
+				local ok, err = pcall(spawnPowerFloater, g)
+				if not ok then
+					warn("[WorkoutController] power floater failed:", err)
+				end
 				return
 			end
 			if attempt < 6 then
